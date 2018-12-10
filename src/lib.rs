@@ -1,4 +1,4 @@
-use self::engine::TableLayout;
+use self::engine::{Span, TableLayout};
 
 /// Core functionality: Uses strongly typed objects to represent input and
 /// output.  External Interfaces will wrap this code.
@@ -6,7 +6,7 @@ mod engine {
     use std::collections::HashMap;
     use std::hash::Hash;
 
-    /// Represent the number of rows and columns occupied by a given table cell.
+    /// Represents the number of rows and columns occupied by a given table cell.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub(crate) struct Span {
         rows: usize,
@@ -27,10 +27,6 @@ mod engine {
             }
             Span { rows, cols }
         }
-
-        pub(crate) fn from_pair(pair: (usize, usize)) -> Span {
-            Span::new(pair.0, pair.1)
-        }
     }
 
     impl Default for Span {
@@ -46,21 +42,35 @@ mod engine {
     pub(crate) type TableSpec<T> = Vec<Vec<T>>;
     pub(crate) type TableLayout<T> = Vec<Vec<Option<T>>>;
 
-    struct ActiveRowSpans(HashMap<usize, usize>);
+    /// [PRIVATE] Tracks which columns are currently occupied by active row
+    /// spans.
+    ///
+    /// # Note:
+    ///
+    /// * This object is completely unaware of multi-column spans.  The caller
+    ///   is responsible for tracking all columns of a multi-column span by
+    ///   calling `RowSpanTracker::track(..)` on each column separately.
+    ///
+    /// * This object does not track which rows or columns belong to which
+    ///   spans, only that they are spanned by *some* cell.
+    struct RowSpanTracker(HashMap<usize, usize>);
 
-    impl ActiveRowSpans {
-        fn new() -> ActiveRowSpans {
-            ActiveRowSpans(HashMap::new())
+    impl RowSpanTracker {
+        /// Creates an empty RowSpanTracker object
+        fn new() -> RowSpanTracker {
+            RowSpanTracker(HashMap::new())
         }
 
-        /// Track a new rowspan for the given 0-indexed column.
+        /// Track a new rowspan for the given column.  Caller should provide
+        /// the total number of spanned rows for the column.
         fn track(&mut self, col_index: usize, row_count: usize) {
             if row_count > 1 {
                 self.0.insert(col_index, row_count);
             }
         }
 
-        /// Decrement all the active spans.
+        /// Decrement all the active spans.  This should be called after each
+        /// row is fully processed.
         fn dec(&mut self) {
             let keys = self.0.keys().cloned().collect::<Vec<_>>();
             for key in keys {
@@ -75,15 +85,26 @@ mod engine {
 
         }
 
-        /// Report if the current column is part of an active rowspan
-        fn spanned(&mut self, col_index: usize) -> bool {
+        /// Report if the current column is part of an active rowspan.
+        fn spanned(&self, col_index: usize) -> bool {
             self.0.get(&col_index).unwrap_or(&0) > &0
         }
 
     }
 
+    /// Given a candidate column, and the cell's column count, return `true`
+    /// if the cell can be fit into this location of the table.
+    fn cell_fits(col: usize, col_count: usize, active_row_spans: &RowSpanTracker) -> bool {
+        for peek in col..col+col_count {
+            if active_row_spans.spanned(peek) {
+                return false
+            }
+        }
+        true
+    }
+
     /// Determine the layout of table cells given the available spans and the
-    /// data for the table
+    /// data for the table.
     pub(crate) fn layout_table<T>(
         spaninfo: &HashMap<T, Span>,
         data: &TableSpec<T>,
@@ -92,22 +113,22 @@ mod engine {
         T: Hash + Eq + Clone,
     {
         let mut table: TableLayout<T> = Vec::new();
-        let mut active_row_spans = ActiveRowSpans::new();
+        let mut active_row_spans = RowSpanTracker::new();
         for inrow in data {
             let mut row = Vec::new();
             let mut col = 0;
             for cell in inrow.iter() {
-                while active_row_spans.spanned(col) {
+                let span = spaninfo.get(&cell).cloned().unwrap_or_default();
+
+                while !cell_fits(col, span.cols, &active_row_spans) {
                     row.push(None);
                     col += 1;
                 }
 
-                let span = spaninfo.get(&cell).cloned().unwrap_or_default();
-
                 row.push(Some(cell.clone()));
                 active_row_spans.track(col, span.rows);
                 col += 1;
-                for offset in 1..span.cols {
+                for _ in 1..span.cols {
                     active_row_spans.track(col, span.rows);
                     row.push(None);
                     col += 1;
@@ -233,10 +254,11 @@ mod engine {
         }
 
         #[test]
-        fn test_blocked_col_spans() {
+        fn rowspan_blocking_colspans() {
+            /// If a rowspan blocks a
             let mut spanspec = HashMap::new();
             spanspec.insert("E", Span::new(2, 1));
-            spanspec.insert("G", Span::new(1, 2));
+            spanspec.insert("G", Span::new(2, 2));
             let data = vec![
                 vec!["A", "B", "C"],
                 vec!["D", "E", "F"],
@@ -247,8 +269,8 @@ mod engine {
             let expected = vec![
                 vec![Some("A"), Some("B"), Some("C")],
                 vec![Some("D"), Some("E"), Some("F")],
-                vec![None, None, Some("G"), Some("H"), Some("I")],  // The first None is because I can't fit a 2 colG in there.
-                vec![Some("J"), Some("K"), None, Some("L")],
+                vec![None, None, Some("G"), None, Some("H"), Some("I")],
+                vec![Some("J"), Some("K"), None, None, Some("L")],
                 vec![Some("M"), Some("N"), Some("O")],
             ];
             let result = layout_table(&spanspec, &data);
@@ -257,6 +279,7 @@ mod engine {
     }
 }
 
-pub fn render_to_json<T>(_layout: TableLayout<T>) -> String {
+
+pub fn layout_to_json<T>(layout: TableLayout<T>) -> String {
     unimplemented!()
 }
