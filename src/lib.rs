@@ -1,285 +1,91 @@
+//! Table rendering crate.
+//!
+
+use serde::Serialize;
+use serde_json;
+use std::collections::HashMap;
+use std::hash::Hash;
 use self::engine::{Span, TableLayout};
 
-/// Core functionality: Uses strongly typed objects to represent input and
-/// output.  External Interfaces will wrap this code.
-mod engine {
-    use std::collections::HashMap;
-    use std::hash::Hash;
+mod engine;
 
-    /// Represents the number of rows and columns occupied by a given table cell.
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(crate) struct Span {
-        rows: usize,
-        cols: usize,
-    }
-
-    impl Span {
-        /// Create a new Span with the specified dimensions.
-        ///
-        /// # Panics:
-        ///
-        /// The value for rows and cols must be non-zero.
-        pub(crate) fn new(rows: usize, cols: usize) -> Span {
-            if rows == 0 {
-                panic!("Error constructing Span.  Zero value provided for Span.rows")
-            } else if cols == 0 {
-                panic!("Error constructing Span.  Zero value provided for Span.cols")
-            }
-            Span { rows, cols }
-        }
-    }
-
-    impl Default for Span {
-        /// Construct a default Span.
-        ///
-        /// A derived Default trait would return a value of `Span { rows: 0, cols: 0 }`
-        /// so we have to implement this manually.
-        fn default() -> Span {
-            Span::new(1, 1)
-        }
-    }
-
-    pub(crate) type TableSpec<T> = Vec<Vec<T>>;
-    pub(crate) type TableLayout<T> = Vec<Vec<Option<T>>>;
-
-    /// [PRIVATE] Tracks which columns are currently occupied by active row
-    /// spans.
-    ///
-    /// # Note:
-    ///
-    /// * This object is completely unaware of multi-column spans.  The caller
-    ///   is responsible for tracking all columns of a multi-column span by
-    ///   calling `RowSpanTracker::track(..)` on each column separately.
-    ///
-    /// * This object does not track which rows or columns belong to which
-    ///   spans, only that they are spanned by *some* cell.
-    struct RowSpanTracker(HashMap<usize, usize>);
-
-    impl RowSpanTracker {
-        /// Creates an empty RowSpanTracker object
-        fn new() -> RowSpanTracker {
-            RowSpanTracker(HashMap::new())
-        }
-
-        /// Track a new rowspan for the given column.  Caller should provide
-        /// the total number of spanned rows for the column.
-        fn track(&mut self, col_index: usize, row_count: usize) {
-            if row_count > 1 {
-                self.0.insert(col_index, row_count);
-            }
-        }
-
-        /// Decrement all the active spans.  This should be called after each
-        /// row is fully processed.
-        fn dec(&mut self) {
-            let keys = self.0.keys().cloned().collect::<Vec<_>>();
-            for key in keys {
-                if let Some(value) = self.0.get_mut(&key) {
-                    if *value > 1 {
-                        *value -= 1;
-                    } else {
-                        self.0.remove(&key);
-                    }
-                }
-            }
-
-        }
-
-        /// Report if the current column is part of an active rowspan.
-        fn spanned(&self, col_index: usize) -> bool {
-            self.0.get(&col_index).unwrap_or(&0) > &0
-        }
-
-    }
-
-    /// Given a candidate column, and the cell's column count, return `true`
-    /// if the cell can be fit into this location of the table.
-    fn cell_fits(col: usize, col_count: usize, active_row_spans: &RowSpanTracker) -> bool {
-        for peek in col..col+col_count {
-            if active_row_spans.spanned(peek) {
-                return false
-            }
-        }
-        true
-    }
-
-    /// Determine the layout of table cells given the available spans and the
-    /// data for the table.
-    pub(crate) fn layout_table<T>(
-        spaninfo: &HashMap<T, Span>,
-        data: &TableSpec<T>,
-    ) -> TableLayout<T>
-    where
-        T: Hash + Eq + Clone,
-    {
-        let mut table: TableLayout<T> = Vec::new();
-        let mut active_row_spans = RowSpanTracker::new();
-        for inrow in data {
-            let mut row = Vec::new();
-            let mut col = 0;
-            for cell in inrow.iter() {
-                let span = spaninfo.get(&cell).cloned().unwrap_or_default();
-
-                while !cell_fits(col, span.cols, &active_row_spans) {
-                    row.push(None);
-                    col += 1;
-                }
-
-                row.push(Some(cell.clone()));
-                active_row_spans.track(col, span.rows);
-                col += 1;
-                for _ in 1..span.cols {
-                    active_row_spans.track(col, span.rows);
-                    row.push(None);
-                    col += 1;
-                }
-            }
-            table.push(row);
-            active_row_spans.dec();
-        }
-        table
-
-        /*
-
-        data.iter()
-            .map(|row| {
-                row.iter()
-                    .map(|cell| Some(cell.clone()))
-                    .collect()
-            })
-            .collect()
-            */
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        /// If no span specifications are given,
-        /// return a simple table that matches the input
-        #[test]
-        fn basic_table_layout() {
-            let spanspec = HashMap::new();
-            let data = vec![
-                vec!["A", "B", "C"],
-                vec!["D", "E", "F"],
-                vec!["G", "H", "I"],
-            ];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), Some("E"), Some("F")],
-                vec![Some("G"), Some("H"), Some("I")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn layout_with_colspan() {
-            let mut spanspec = HashMap::new();
-            spanspec.insert("D", Span::new(1, 2));
-            let data = vec![vec!["A", "B", "C"], vec!["D", "E"], vec!["G", "H", "I"]];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), None, Some("E")],
-                vec![Some("G"), Some("H"), Some("I")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn layout_with_rowspan() {
-            let mut spanspec = HashMap::new();
-            spanspec.insert("E", Span::new(2, 1));
-            let data = vec![
-                vec!["A", "B", "C"],
-                vec!["D", "E", "F"],
-                vec!["G", "H"],
-                vec!["J", "K", "L"],
-            ];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), Some("E"), Some("F")],
-                vec![Some("G"), None, Some("H")],
-                vec![Some("J"), Some("K"), Some("L")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn test_block_span() {
-            let mut spanspec = HashMap::new();
-            spanspec.insert("D", Span::new(3, 2));
-            spanspec.insert("E", Span::new(1, 2));
-            let data = vec![
-                vec!["A", "B", "C"],
-                vec!["D", "E", "F"],
-                vec!["G", "H", "I"],
-                vec!["J", "K", "L"],
-                vec!["M", "N", "O"],
-            ];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), None, Some("E"), None, Some("F")],
-                vec![None, None, Some("G"), Some("H"), Some("I")],
-                vec![None, None, Some("J"), Some("K"), Some("L")],
-                vec![Some("M"), Some("N"), Some("O")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn test_overlapping_row_spans() {
-            let mut spanspec = HashMap::new();
-            spanspec.insert("E", Span::new(2, 1));
-            spanspec.insert("H", Span::new(2, 1));
-            let data = vec![
-                vec!["A", "B", "C"],
-                vec!["D", "E", "F"],
-                vec!["G", "H", "I"],
-                vec!["J", "K", "L"],
-                vec!["M", "N", "O"],
-            ];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), Some("E"), Some("F")],
-                vec![Some("G"), None, Some("H"), Some("I")],
-                vec![Some("J"), Some("K"), None, Some("L")],
-                vec![Some("M"), Some("N"), Some("O")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn rowspan_blocking_colspans() {
-            /// If a rowspan blocks a
-            let mut spanspec = HashMap::new();
-            spanspec.insert("E", Span::new(2, 1));
-            spanspec.insert("G", Span::new(2, 2));
-            let data = vec![
-                vec!["A", "B", "C"],
-                vec!["D", "E", "F"],
-                vec!["G", "H", "I"],
-                vec!["J", "K", "L"],
-                vec!["M", "N", "O"],
-            ];
-            let expected = vec![
-                vec![Some("A"), Some("B"), Some("C")],
-                vec![Some("D"), Some("E"), Some("F")],
-                vec![None, None, Some("G"), None, Some("H"), Some("I")],
-                vec![Some("J"), Some("K"), None, None, Some("L")],
-                vec![Some("M"), Some("N"), Some("O")],
-            ];
-            let result = layout_table(&spanspec, &data);
-            assert_eq!(result, expected);
-        }
-    }
+/// IntoIterator where Item=(x, y) will work with a HashMap, a BTreeMap, or a Vec.
+///
+/// # Panics
+///
+/// This panics if any of the usize values passed to `Span::new` are zero.
+fn simpledata_to_spaninfo<S, T>(data: S) -> HashMap<T, Span>
+where
+    S: IntoIterator<Item = (T, (usize, usize))>,
+    T: Clone + Eq + Hash,
+{
+    data.into_iter()
+        .map(|(cell, (rows, cols))| (cell, Span::new(rows, cols)))
+        .collect()
 }
 
+/// Convert incoming JSON data to a HashMap<String, Span> or return an Error.
+///
+/// # Panics
+///
+/// This panics if any of the extracted usize values are zero.
+fn json_to_spaninfo(data: &str) -> Result<HashMap<String, Span>, serde_json::Error> {
+    // Given a type hint, serde_json will unpack well-typed JSON data into the
+    // data structure we want.
+    let hashmap: HashMap<String, (usize, usize)> = serde_json::from_str(data)?;
+    Ok(simpledata_to_spaninfo(hashmap))
+}
 
-pub fn layout_to_json<T>(layout: TableLayout<T>) -> String {
-    unimplemented!()
+/// A TableSpec is already a simple data structure.
+/// Serde can serialize it directly.
+fn json_to_tablespec(data: &str) -> Result<engine::TableSpec<String>, serde_json::Error> {
+    serde_json::from_str(data)
+}
+
+/// Serde will convert Option::None values to `null`
+fn layout_to_json<T: Serialize>(layout: &TableLayout<T>) -> Result<String, serde_json::Error> {
+    serde_json::to_string(layout)
+}
+
+/// Given a information about cell spans, and the input data for the table,
+/// calculate the layout for the table, including spans.
+///
+/// Span info will often be provided as a `HashMap<T, (usize, usize)>` or
+/// `BTreeMap<T (usize, usize)>`, but can be any data structure that implements
+/// the appropriate `IntoIterator` trait.
+///
+/// The table spec is provided as a 2D `Vec` of cell identifiers.
+///
+/// Returns a 2D `Vec` of `Option<T>`, where cells that contain data are
+/// returned as `Some(T)`, while cells that are spanned from other cells are
+/// returned as `None`.
+pub fn render_simpledata_table<T, S>(spaninfo: S, tablespec: Vec<Vec<T>>) -> Vec<Vec<Option<T>>>
+where
+    S: IntoIterator<Item = (T, (usize, usize))>,
+    T: Hash + Eq + Clone,
+{
+    let spaninfo = simpledata_to_spaninfo(spaninfo);
+    engine::layout_table(&spaninfo, &tablespec)
+}
+
+/// Taking a JSON str representing the span info and another representing a
+/// table spec, render the table as JSON output including spanned cells.
+pub fn render_json_table(spaninfo: &str, tablespec: &str) -> Result<String, serde_json::Error> {
+    let spaninfo = json_to_spaninfo(spaninfo)?;
+    let tablespec = json_to_tablespec(tablespec)?;
+    layout_to_json(&engine::layout_table(&spaninfo, &tablespec))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_json_table;
+    #[test]
+    fn end_to_end() {
+        let spaninfo = r#"{"B": [2, 2], "H": [1, 2]}"#;
+        let tablespec = r#"[["A", "B", "C"], ["D", "E"], ["F", "G", "H"]]"#;
+        assert_eq!(
+            render_json_table(spaninfo, tablespec).unwrap(),
+            r#"[["A","B",null,"C"],["D",null,null,"E"],["F","G","H",null]]"#
+        );
+    }
 }
