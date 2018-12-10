@@ -1,10 +1,13 @@
-//! Table renderer.
+//! Table renderer.  Implemented using the principles of Hexagonal Architecture.
+//! At the core is the `engine` module, which deals with well-typed input data,
+//! and produces well-typed output data.  All input and output handling, public
+//! interfaces, and type conversion happen in thin wrappers around this.
 //!
-//! To be implemented:
-//!
-//! * Handle row spans that go beyond the last row that has actual data in it.
-//! * Making null cells aware of which span they belong to.
-//!
+//! Rust was chosen as an implementation for its strong type system, and its
+//! robust FFI capabilities that would allow it to be embedded in a phone app,
+//! in a web front-end by compiling to WASM, or used either directly or in
+//! another language on the server-side.
+
 
 use serde::Serialize;
 use serde_json;
@@ -12,7 +15,9 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use self::engine::{Span, TableLayout};
 
+
 mod engine;
+
 
 /// IntoIterator where Item=(x, y) will work with a HashMap, a BTreeMap, or a Vec.
 ///

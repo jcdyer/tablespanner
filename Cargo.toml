@@ -1,9 +1,10 @@
 [package]
-name = "crosscomm"
+name = "tablespanner"
 version = "0.1.0"
 authors = ["J. Cliff Dyer <jcd@sdf.org>"]
 edition = "2018"
 
 [dependencies]
-serde = "*"
+clap = "2"
+serde = "1.0"
 serde_json = "1.0"
