@@ -1,4 +1,9 @@
-//! Table rendering crate.
+//! Table renderer.
+//!
+//! To be implemented:
+//!
+//! * Handle row spans that go beyond the last row that has actual data in it.
+//! * Making null cells aware of which span they belong to.
 //!
 
 use serde::Serialize;

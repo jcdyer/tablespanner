@@ -1,5 +1,6 @@
 //! Core functionality: Uses strongly typed objects to represent input and
-//! output.  External Interfaces will wrap this code.
+//! output. Public interfaces will wrap this code with common types for ease
+//! of use.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -28,17 +29,22 @@ impl Span {
 }
 
 impl Default for Span {
+
     /// Construct a default Span.
     ///
-    /// A derived Default trait would return a value of `Span { rows: 0, cols: 0 }`
-    /// so we have to implement this manually.
+    /// A derived Default trait would construct a value of
+    /// `Span { rows: 0, cols: 0 }` so we have to implement this manually.
     fn default() -> Span {
         Span::new(1, 1)
     }
 }
 
+/// Type alias for input table data, without span information.
 pub(crate) type TableSpec<T> = Vec<Vec<T>>;
+
+/// Type alias for output table layout with spanned cells rendered as `None`.
 pub(crate) type TableLayout<T> = Vec<Vec<Option<T>>>;
+
 
 /// [PRIVATE] Tracks which columns are currently occupied by active row
 /// spans.
@@ -51,10 +57,15 @@ pub(crate) type TableLayout<T> = Vec<Vec<Option<T>>>;
 ///
 /// * This object does not track which rows or columns belong to which
 ///   spans, only that they are spanned by *some* cell.
+///
+/// * This version maintains state, and tracks row spans relative to the
+///   current row.  An alternative implementation that tracks all spans
+///   statelessly might be more flexible, but would require the caller to
+///   track information like current row.
 struct RowSpanTracker(HashMap<usize, usize>);
 
 impl RowSpanTracker {
-    /// Creates an empty RowSpanTracker object
+    /// Create an empty RowSpanTracker object
     fn new() -> RowSpanTracker {
         RowSpanTracker(HashMap::new())
     }
@@ -86,10 +97,18 @@ impl RowSpanTracker {
     fn spanned(&self, col_index: usize) -> bool {
         self.0.get(&col_index).unwrap_or(&0) > &0
     }
+
+    /// Report the highest column that is part of an active rowspan.
+    ///
+    /// If there are no active rowspans, returns None.
+    ///
+    fn max_spanned(&self) -> Option<usize> {
+        self.0.keys().max().cloned()
+    }
 }
 
-/// Given a candidate column, and the cell's column count, return `true`
-/// if the cell can be fit into this location of the table.
+/// [PRIVATE] Given a candidate column, and the cell's column count, return
+/// `true` if the cell can be fit into this location of the table.
 fn cell_fits(col: usize, col_count: usize, active_row_spans: &RowSpanTracker) -> bool {
     for peek in col..col + col_count {
         if active_row_spans.spanned(peek) {
@@ -126,18 +145,13 @@ where
         table.push(row);
         active_row_spans.dec();
     }
+
+    // Handle trailing spanned rows.
+    while let Some(col) = active_row_spans.max_spanned() {
+        table.push(vec![None; col + 1]);
+        active_row_spans.dec();
+    }
     table
-
-    /*
-
-        data.iter()
-            .map(|row| {
-                row.iter()
-                    .map(|cell| Some(cell.clone()))
-                    .collect()
-            })
-            .collect()
-            */
 }
 
 #[cfg(test)]
@@ -266,4 +280,20 @@ mod tests {
         let result = layout_table(&spanspec, &data);
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_trailing_rowspans() {
+        let mut spanspec = HashMap::new();
+        spanspec.insert("B", Span::new(3, 1));
+        spanspec.insert("C", Span::new(2, 1));
+        let data = vec![vec!["A", "B", "C"]];
+        let expected = vec![
+            vec![Some("A"), Some("B"), Some("C")],
+            vec![None, None, None],
+            vec![None, None],
+        ];
+        let result = layout_table(&spanspec, &data);
+        assert_eq!(result, expected);
+    }
+
 }
