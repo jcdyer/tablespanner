@@ -1,13 +1,40 @@
-//! Table renderer.  Implemented using the principles of Hexagonal Architecture.
-//! At the core is the `engine` module, which deals with well-typed input data,
-//! and produces well-typed output data.  All input and output handling, public
-//! interfaces, and type conversion happen in thin wrappers around this.
+//! # Tablespanner
+//!
+//! Implemented using the principles of Hexagonal Architecture: At the core is
+//! the `engine` module, which deals with well-typed input data, and produces
+//! well-typed output.  All input and output handling, public interfaces, and
+//! type conversion happen in thin wrappers around the core.  This makes it
+//! easy to add new wrappers for different front-ends.
 //!
 //! Rust was chosen as an implementation for its strong type system, and its
 //! robust FFI capabilities that would allow it to be embedded in a phone app,
 //! in a web front-end by compiling to WASM, or used either directly or in
 //! another language on the server-side.
-
+//!
+//! ## CLI usage:
+//!
+//! ```sh
+//! $ cargo build
+//! $ target/debug/tablespanner '{"a": [2, 2]}' '[["a", "b"], ["c", "d"]]'
+//! [["a", null, "b"], [null, null, "c", "d"]]
+//! ```
+//!
+//! ## Library usage:
+//!
+//! ```rust
+//! use std::collections::HashMap;
+//! use tablespanner;
+//!
+//! fn render_table() -> Vec<Vec<Option<&'static str>>> {
+//!     let mut spaninfo = HashMap::new();
+//!     spaninfo.insert("a", (2, 2));
+//!     let table = vec![
+//!         vec!["a", "b"],
+//!         vec!["c", "d"],
+//!     ];
+//!     tablespanner::render_table(spaninfo, table)
+//! }
+//! ```
 
 use serde::Serialize;
 use serde_json;
@@ -69,7 +96,7 @@ fn layout_to_json<T: Serialize>(layout: &TableLayout<T>) -> Result<String, serde
 /// Returns a 2D `Vec` of `Option<T>`, where cells that contain data are
 /// returned as `Some(T)`, while cells that are spanned from other cells are
 /// returned as `None`.
-pub fn render_simpledata_table<T, S>(spaninfo: S, tablespec: Vec<Vec<T>>) -> Vec<Vec<Option<T>>>
+pub fn render_table<T, S>(spaninfo: S, tablespec: Vec<Vec<T>>) -> Vec<Vec<Option<T>>>
 where
     S: IntoIterator<Item = (T, (usize, usize))>,
     T: Hash + Eq + Clone,
