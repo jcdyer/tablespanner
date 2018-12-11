@@ -23,7 +23,7 @@ at `cargo doc --open`
 
     For documentation of non-public interfaces:
     ```bash
-    cargo doc --open --document-private items
+    cargo doc --open --document-private-items
     ```
 
 6.  To run from the command line:
