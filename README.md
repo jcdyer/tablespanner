@@ -28,12 +28,12 @@ at `cargo doc --open`
 
 6.  To run from the command line:
     ```bash
-    cargo run -- '{"A": [2, 1]}' '[["A", "B"], ["C, "D"]]'
+    cargo run -- '{"A": [2, 1]}' '[["A", "B"], ["C", "D"]]'
     ```
 
     or:
 
     ```bash
     cargo build
-    target/debug/tablespanner '{"A": [2, 1]}' '[["A", "B"], ["C, "D"]]'
+    target/debug/tablespanner '{"A": [2, 1]}' '[["A", "B"], ["C", "D"]]'
     ```
